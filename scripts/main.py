@@ -4,6 +4,7 @@ GigazineのRSSフィードを取得し、新着記事をDiscord Webhookで投稿
 """
 
 import os
+import re
 import json
 import feedparser
 import requests
@@ -75,6 +76,24 @@ def save_state_to_gist(state: dict) -> None:
         print(f"Error saving state to Gist: {e}")
 
 
+def strip_html_tags(text: str) -> str:
+    """HTMLタグを除去してプレーンテキストに変換"""
+    if not text:
+        return ""
+    # HTMLタグを除去
+    clean = re.sub(r'<[^>]+>', '', text)
+    # HTMLエンティティをデコード
+    clean = clean.replace('&nbsp;', ' ')
+    clean = clean.replace('&amp;', '&')
+    clean = clean.replace('&lt;', '<')
+    clean = clean.replace('&gt;', '>')
+    clean = clean.replace('&quot;', '"')
+    clean = clean.replace('&#39;', "'")
+    # 余分な空白を整理
+    clean = re.sub(r'\s+', ' ', clean).strip()
+    return clean
+
+
 def fetch_rss() -> list[dict]:
     """GigazineのRSSフィードを取得してパース"""
     feed = feedparser.parse(GIGAZINE_RSS_URL)
@@ -82,22 +101,28 @@ def fetch_rss() -> list[dict]:
     
     for entry in feed.entries[:10]:  # 最新10件まで
         # サムネイル画像を取得
-        thumbnail = None
+        image = None
         if hasattr(entry, 'media_thumbnail') and entry.media_thumbnail:
-            thumbnail = entry.media_thumbnail[0].get('url')
+            image = entry.media_thumbnail[0].get('url')
         elif hasattr(entry, 'enclosures') and entry.enclosures:
             for enc in entry.enclosures:
                 if enc.get('type', '').startswith('image/'):
-                    thumbnail = enc.get('href')
+                    image = enc.get('href')
                     break
+        
+        # サマリーからHTMLタグを除去
+        raw_summary = entry.get("summary", "")
+        clean_summary = strip_html_tags(raw_summary)
+        if len(clean_summary) > 200:
+            clean_summary = clean_summary[:200] + "..."
         
         articles.append({
             "id": entry.get("id", entry.link),
-            "title": entry.title,
+            "title": strip_html_tags(entry.title),
             "link": entry.link,
             "published": entry.get("published", ""),
-            "summary": entry.get("summary", "")[:200] + "..." if len(entry.get("summary", "")) > 200 else entry.get("summary", ""),
-            "thumbnail": thumbnail
+            "summary": clean_summary,
+            "image": image
         })
     
     return articles
@@ -120,8 +145,9 @@ def post_to_discord(article: dict) -> bool:
         "timestamp": datetime.utcnow().isoformat()
     }
     
-    if article.get("thumbnail"):
-        embed["thumbnail"] = {"url": article["thumbnail"]}
+    # 大きな画像として表示（thumbnailではなくimage）
+    if article.get("image"):
+        embed["image"] = {"url": article["image"]}
     
     payload = {
         "embeds": [embed]
