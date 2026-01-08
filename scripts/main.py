@@ -94,13 +94,36 @@ def strip_html_tags(text: str) -> str:
     return clean
 
 
+def get_og_image(url: str) -> str | None:
+    """記事ページからog:image（OGP画像）を取得"""
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        html = response.text
+        
+        # og:image メタタグを探す
+        match = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', html)
+        if match:
+            return match.group(1)
+        
+        # 逆順のパターンも試す
+        match = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html)
+        if match:
+            return match.group(1)
+            
+    except Exception as e:
+        print(f"Error fetching og:image from {url}: {e}")
+    
+    return None
+
+
 def fetch_rss() -> list[dict]:
     """GigazineのRSSフィードを取得してパース"""
     feed = feedparser.parse(GIGAZINE_RSS_URL)
     articles = []
     
     for entry in feed.entries[:10]:  # 最新10件まで
-        # サムネイル画像を取得
+        # サムネイル画像を取得（RSSから）
         image = None
         if hasattr(entry, 'media_thumbnail') and entry.media_thumbnail:
             image = entry.media_thumbnail[0].get('url')
@@ -109,6 +132,10 @@ def fetch_rss() -> list[dict]:
                 if enc.get('type', '').startswith('image/'):
                     image = enc.get('href')
                     break
+        
+        # RSSに画像がなければ、記事ページからog:imageを取得
+        if not image:
+            image = get_og_image(entry.link)
         
         # サマリーからHTMLタグを除去
         raw_summary = entry.get("summary", "")
